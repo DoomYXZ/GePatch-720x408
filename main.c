@@ -16,8 +16,8 @@ PSP_MODULE_INFO("GePatch", 0x1007, 1, 0);
 #define DRAW_NATIVE 0xABCDEF00
 
 #define PITCH 960
-#define WIDTH 960
-#define HEIGHT 544
+#define WIDTH 720
+#define HEIGHT 408
 #define PIXELFORMAT GE_FORMAT_565
 
 #define FAKE_VRAM 0x0A000000
@@ -540,10 +540,10 @@ void patchGeList(u32 *list, u32 *stall) {
                       decoded = 1;
                     }
 
-                    if (val == 480 || val == 960)
-                      *(short *)addr = 960;
+                    if (val == 480 || val == 720)
+                      *(short *)addr = 720;
                     else if (val == 272 || val == 544)
-                      *(short *)addr = 544;
+                      *(short *)addr = 408;
                     else if (val > -2048 && val < 2048)
                       *(short *)addr *= 2;
 
@@ -574,11 +574,11 @@ void patchGeList(u32 *list, u32 *stall) {
                       decoded = 1;
                     }
 
-                    if (t.f == 480 || t.f == 960) {
-                      t.f = 960;
+                    if (t.f == 480 || t.f == 720) {
+                      t.f = 720;
                       *(u32 *)addr = t.i;
-                    } else if (t.f == 272 || t.f == 544) {
-                      t.f = 544;
+                    } else if (t.f == 272 || t.f == 408) {
+                      t.f = 408;
                       *(u32 *)addr = t.i;
                     } else if (t.f > -2048 && t.f < 2048) {
                       t.f *= 2;
@@ -635,7 +635,7 @@ exit_loop:
 
           // This allows more games to work, but causes weird triangles in Sonic.
           u32 pitch = state.framebufwidth & 0xffff;
-          if (pitch == 512 || pitch == 960) {
+          if (pitch == 512 || pitch == 720) {
             state.ignore_framebuf = 0;
           } else {
             *state.framebufwidth_addr = (GE_CMD_FRAMEBUFWIDTH << 24) | ((VRAM_1KB >> 24) << 16) | 0;
