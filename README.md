@@ -1,8 +1,6 @@
 # GE Patch Plugin 720x408 edit
 
-This is an experimental plugin for [Adrenaline](https://github.com/TheOfficialFloW/Adrenaline) that allows you to play a few games in native resolution.
-
-Re. For Monster Hunter ofc
+This is an experimental plugin for [Adrenaline](https://github.com/TheOfficialFloW/Adrenaline) that allows you to play a few games in native resolution. (not this version)
 
 ## Compatibility List
 
