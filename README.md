@@ -1,4 +1,5 @@
-# GE Patch Plugin 720x408 edit DO NOT USE IT, USE ORIGINAL VERSION INSTEAD!
+# GE Patch Plugin 720x408 edit 
+# DO NOT USE IT, USE ORIGINAL VERSION INSTEAD!
 
 This is an experimental plugin for [Adrenaline](https://github.com/TheOfficialFloW/Adrenaline) that allows you to play a few games in native resolution. (not this version)
 
