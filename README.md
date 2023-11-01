@@ -1,4 +1,4 @@
-# GE Patch Plugin
+# GE Patch Plugin 720x408 edit
 
 This is an experimental plugin for [Adrenaline](https://github.com/TheOfficialFloW/Adrenaline) that allows you to play a few games in native resolution.
 
@@ -6,73 +6,10 @@ This is an experimental plugin for [Adrenaline](https://github.com/TheOfficialFl
 
 Please help testing games and filling out the [spreadsheet](https://docs.google.com/spreadsheets/d/1aZlmKwELcdpCb9ezI5iRfgcX9hoGxgL4tNC-673aKqk/edit#gid=0).
 
-## Changelog v0.2
-
-- Added ability to skip GE patches by holding L while starting a game.
-- Changed framebuffer copy algorithm.
-- Changed behavior of sync opcode.
-- Disabled forced dithering again.
-
-## Changelog v0.19.1
-
-- Removed optimization introduced earlier since it's not working.
-- Forced dithering on.
-
 ## Changelog v0.19
 
 - Fixed a small bug that was introduced earlier.
 - Fixed a few bugs that caused certain games to crash.
-
-## Changelog v0.18.1
-
-**This must be used with Adrenaline-7, not Adrenaline-6.9!**
-
-- Fixed bug that enables more games to render without smear.
-
-## Changelog v0.18
-
-**This must be used with Adrenaline-7, not Adrenaline-6.9!**
-
-- Changed fake vram address to allow more games to work.
-- Added patch to allow games to use more memory of fake vram to store textures.
-- Added optimization to prevent double patching of vertices. May increase performance in some games and prevent overzoomed textures.
-
-## Changelog v0.17.1
-
-- Fixed indexed draws which caused some games to render at 480x272 only.
-
-## Changelog v0.17
-
-- Fixed artifacts, flickering and black screens in some games.
-- Fixed some regressions introduced in earlier versions.
-
-## Changelog v0.16
-
-- Added behavior of signal commands.
-- Optimized draws to ignored framebuffers.
-
-## Changelog v0.15
-
-- Switched to using dfs algorithm to traverse the display list.
-- Fixed a few commands and changed their stopping criteras.
-- Added indexed draws support.
-
-## Changelog v0.14
-
-- Fixed another issue that causes games to show black screen only.
-
-## Changelog v0.13
-
-- Fixed issue where some games would render a black screen only.
-- Fixed issue where some games would crash because vertices were updated multiple times.
-
-## Changelog v0.12
-
-- Fixed issue where some games would be inverted or upsidedown.
-
-## Changelog v0.11
-
-- Fixed issue where black rectangles would cover the screen in lots of games.
 
 ## Installation
 
