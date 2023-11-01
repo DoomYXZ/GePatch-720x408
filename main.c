@@ -1,6 +1,5 @@
 #include <pspsdk.h>
 #include <pspkernel.h>
-#include <pspctrl.h>
 #include <pspge.h>
 #include <pspgu.h>
 
@@ -189,20 +188,19 @@ void GetIndexBounds(const void *inds, int count, u32 vertType, u16 *indexLowerBo
 }
 
 typedef struct {
-  u32 *list;
+  u32 list;
   u32 base;
   u32 offset;
 } StackEntry;
 
 typedef struct {
-  u32 ge_cmd[0x100];
+  u32 ge_cmds[0x100];
 
   u32 texbufptr[8];
   u32 texbufwidth[8];
   u32 framebufptr;
   u32 framebufwidth;
   u32 *framebufwidth_addr;
-  u32 framebuf;
 
   u32 base;
   u32 offset;
@@ -215,7 +213,8 @@ typedef struct {
   u32 ignore_framebuf;
   u32 ignore_texture;
 
-  u32 has_draws;
+  u32 sync;
+  u32 finished;
 
   StackEntry stack[64];
   u32 curr_stack;
@@ -225,6 +224,9 @@ typedef struct {
 } GeState;
 
 static GeState state;
+
+static int rendered_in_sync = 0;
+static int framebuf_set = 0;
 
 void resetGeState() {
   memset(&state, 0, sizeof(GeState));
@@ -298,35 +300,35 @@ void patchGeList(u32 *list, u32 *stall) {
     u32 cmd = op >> 24;
     u32 data = op & 0xffffff;
 
-    state.ge_cmd[cmd] = data;
+    state.ge_cmds[cmd] = op;
 
     switch (cmd) {
       // Skip matrix data
 
-      // case GE_CMD_BONEMATRIXNUMBER:
-        // if (*(list+12) >> 24 == GE_CMD_BONEMATRIXDATA)
-          // list += 12;
-        // break;
+      case GE_CMD_BONEMATRIXNUMBER:
+        if (*(list+12) >> 24 == GE_CMD_BONEMATRIXDATA)
+          list += 12;
+        break;
 
-      // case GE_CMD_WORLDMATRIXNUMBER:
-        // if (*(list+12) >> 24 == GE_CMD_WORLDMATRIXDATA)
-          // list += 12;
-        // break;
+      case GE_CMD_WORLDMATRIXNUMBER:
+        if (*(list+12) >> 24 == GE_CMD_WORLDMATRIXDATA)
+          list += 12;
+        break;
 
-      // case GE_CMD_VIEWMATRIXNUMBER:
-        // if (*(list+12) >> 24 == GE_CMD_VIEWMATRIXDATA)
-          // list += 12;
-        // break;
+      case GE_CMD_VIEWMATRIXNUMBER:
+        if (*(list+12) >> 24 == GE_CMD_VIEWMATRIXDATA)
+          list += 12;
+        break;
 
-      // case GE_CMD_TGENMATRIXNUMBER:
-        // if (*(list+12) >> 24 == GE_CMD_TGENMATRIXDATA)
-          // list += 12;
-        // break;
+      case GE_CMD_TGENMATRIXNUMBER:
+        if (*(list+12) >> 24 == GE_CMD_TGENMATRIXDATA)
+          list += 12;
+        break;
 
-      // case GE_CMD_PROJMATRIXNUMBER:
-        // if (*(list+16) >> 24 == GE_CMD_PROJMATRIXDATA)
-          // list += 16;
-        // break;
+      case GE_CMD_PROJMATRIXNUMBER:
+        if (*(list+16) >> 24 == GE_CMD_PROJMATRIXDATA)
+          list += 16;
+        break;
 
       // Handle control flow commands
 
@@ -345,13 +347,8 @@ void patchGeList(u32 *list, u32 *stall) {
       // TODO: need to save other states, too?
       case GE_CMD_CALL:
         state.address = ((state.base | data) + state.offset) & 0x0ffffffc;
-        if (*(u32 *)(state.address) >> 24 == GE_CMD_BONEMATRIXDATA &&
-            *(u32 *)(state.address+11*4) >> 24 == GE_CMD_BONEMATRIXDATA &&
-            *(u32 *)(state.address+12*4) >> 24 == GE_CMD_RET) {
-          break;
-        }
         stack_entry = &stack_entry_buf;
-        stack_entry->list = list;
+        stack_entry->list = (u32)list;
         stack_entry->offset = state.offset;
         if (push(stack_entry) == 0) {
           list = (u32 *)(state.address - 4);
@@ -370,13 +367,15 @@ void patchGeList(u32 *list, u32 *stall) {
         break;
 
       case GE_CMD_RET:
+      {
         // Ignore returns when the stack is empty
         stack_entry = pop();
         if (stack_entry) {
-          list = stack_entry->list;
+          list = (u32 *)stack_entry->list;
           state.offset = stack_entry->offset;
         }
         break;
+      }
 
       case GE_CMD_END:
       {
@@ -389,9 +388,11 @@ void patchGeList(u32 *list, u32 *stall) {
             u16 enddata = data & 0xffff;
             u32 target;
 
+            state.sync = 0;
+
             switch (behaviour) {
               case PSP_GE_SIGNAL_SYNC:
-                list += 2;
+                state.sync = 1;
                 break;
 
               case PSP_GE_SIGNAL_JUMP:
@@ -402,7 +403,7 @@ void patchGeList(u32 *list, u32 *stall) {
               case PSP_GE_SIGNAL_CALL:
                 target = (((signal << 16) | enddata) & 0x0ffffffc);
                 stack_entry = &stack_entry_buf;
-                stack_entry->list = list;
+                stack_entry->list = (u32)list;
                 stack_entry->base = state.base;
                 stack_entry->offset = state.offset;
                 if (push(stack_entry) == 0)
@@ -413,7 +414,7 @@ void patchGeList(u32 *list, u32 *stall) {
                 // Ignore returns when the stack is empty
                 stack_entry = pop();
                 if (stack_entry) {
-                  list = stack_entry->list;
+                  list = (u32 *)stack_entry->list;
                   state.base = stack_entry->base;
                   state.offset = stack_entry->offset;
                 }
@@ -426,6 +427,13 @@ void patchGeList(u32 *list, u32 *stall) {
           }
 
           case GE_CMD_FINISH:
+            // After syncing, finish is ignored?
+            if (state.sync) {
+              state.sync = 0;
+              break;
+            }
+            // resetGeState();
+            state.finished = 1;
             goto finish;
 
           default:
@@ -451,9 +459,7 @@ void patchGeList(u32 *list, u32 *stall) {
       case GE_CMD_BEZIER:
       case GE_CMD_SPLINE:
       {
-        state.has_draws = 1;
-
-        if (state.ignore_framebuf || (state.ignore_texture && state.ge_cmd[GE_CMD_TEXTUREMAPENABLE])) {
+        if (state.ignore_framebuf || state.ignore_texture) {
           *list = 0;
           break;
         }
@@ -475,7 +481,7 @@ void patchGeList(u32 *list, u32 *stall) {
 
       case GE_CMD_BOUNDINGBOX:
       {
-        if (state.ignore_framebuf || (state.ignore_texture && state.ge_cmd[GE_CMD_TEXTUREMAPENABLE]))
+        if (state.ignore_framebuf || state.ignore_texture)
           break;
 
         if ((state.vertex_type & GE_VTYPE_THROUGH_MASK) == GE_VTYPE_THROUGH) {
@@ -492,11 +498,9 @@ void patchGeList(u32 *list, u32 *stall) {
 
       case GE_CMD_PRIM:
       {
-        state.has_draws = 1;
-
         // Dragon Ball Z Tenkaichi Tag Team uses the same GE list again,
         // therefore NOPing it makes character invisible.
-        if (state.ignore_framebuf || (state.ignore_texture && state.ge_cmd[GE_CMD_TEXTUREMAPENABLE])) {
+        if (state.ignore_framebuf || state.ignore_texture) {
           *list = 0;
           break;
         }
@@ -540,9 +544,9 @@ void patchGeList(u32 *list, u32 *stall) {
                       decoded = 1;
                     }
 
-                    if (val == 480 || val == 720)
+                    if (val == 480 || val == 720 || val == 960)
                       *(short *)addr = 720;
-                    else if (val == 272 || val == 544)
+                    else if (val == 272 || val == 408 || val == 544)
                       *(short *)addr = 408;
                     else if (val > -2048 && val < 2048)
                       *(short *)addr *= 2;
@@ -574,10 +578,10 @@ void patchGeList(u32 *list, u32 *stall) {
                       decoded = 1;
                     }
 
-                    if (t.f == 480 || t.f == 720) {
+                    if (t.f == 480 || t.f == 720 || t.f == 960) {
                       t.f = 720;
                       *(u32 *)addr = t.i;
-                    } else if (t.f == 272 || t.f == 408) {
+                    } else if (t.f == 272 || t.f == 408 || t.f == 960) {
                       t.f = 408;
                       *(u32 *)addr = t.i;
                     } else if (t.f > -2048 && t.f < 2048) {
@@ -609,10 +613,6 @@ exit_loop:
 
       // Patch GE commands
 
-      // case GE_CMD_DITHERENABLE:
-        // *list = (cmd << 24) | 1;
-        // break;
-
       case GE_CMD_FRAMEBUFPIXFORMAT:
         *list = (cmd << 24) | PIXELFORMAT;
         break;
@@ -624,25 +624,24 @@ exit_loop:
           *list = (cmd << 24) | (VRAM_DRAW_BUFFER_OFFSET & 0xffffff);
           state.framebufptr = op;
         } else {
-          u16 pitch = (op & 0xffff) != 512 ? (op & 0xffff) : 960;
-          *list = (cmd << 24) | ((VRAM_DRAW_BUFFER_OFFSET >> 24) << 16) | pitch;
+          *list = (cmd << 24) | ((VRAM_DRAW_BUFFER_OFFSET >> 24) << 16) | PITCH;
           state.framebufwidth = op;
           state.framebufwidth_addr = list;
         }
 
         if (state.framebufptr && state.framebufwidth) {
-          state.framebuf = FAKE_VRAM | (state.framebufptr & 0xffffff);
+          u32 framebuf = FAKE_VRAM | (state.framebufptr & 0xffffff);
+          u32 pitch = state.framebufwidth & 0xffff;
 
           // This allows more games to work, but causes weird triangles in Sonic.
-          u32 pitch = state.framebufwidth & 0xffff;
-          if (pitch == 512 || pitch == 720) {
+          if (pitch == 512 || pitch == 480 || pitch == 720 || pitch == 960) {
             state.ignore_framebuf = 0;
           } else {
-            *state.framebufwidth_addr = (GE_CMD_FRAMEBUFWIDTH << 24) | ((VRAM_1KB >> 24) << 16) | 0;
+            // *state.framebufwidth_addr = (GE_CMD_FRAMEBUFWIDTH << 24) | ((VRAM_1KB >> 24) << 16) | 0;
             state.ignore_framebuf = 1;
           }
 
-          insertFramebuf(state.framebuf);
+          insertFramebuf(framebuf);
 
           state.framebufptr = 0;
           state.framebufwidth = 0;
@@ -687,7 +686,7 @@ exit_loop:
 
         if (state.texbufptr[index] && state.texbufwidth[index]) {
           u32 texaddr = ((state.texbufwidth[index] & 0x0f0000) << 8) | (state.texbufptr[index] & 0xffffff);
-          if (texaddr != state.framebuf && findFramebuf(texaddr) >= 0) {
+          if (findFramebuf(texaddr) >= 0) {
             state.ignore_texture = 1;
           } else {
             state.ignore_texture = 0;
@@ -748,6 +747,8 @@ int (* _sceGeGetList)(int qid, void *list, int *flag);
 int (* _sceGeListUpdateStallAddr)(int qid, void *stall);
 int (* _sceGeListEnQueue)(const void *list, void *stall, int cbid, PspGeListArgs *arg);
 int (* _sceGeListEnQueueHead)(const void *list, void *stall, int cbid, PspGeListArgs *arg);
+int (* _sceGeListSync)(int qid, int syncType);
+int (* _sceGeDrawSync)(int syncType);
 
 int (* _sceDisplaySetFrameBuf)(void *topaddr, int bufferwidth, int pixelformat, int sync);
 
@@ -757,18 +758,6 @@ void *sceGeEdramGetAddrPatched(void) {
 
 unsigned int sceGeEdramGetSizePatched(void) {
   return 4 * 1024 * 1024;
-}
-
-void copyFrameBuffer() {
-  *(u32 *)DRAW_NATIVE = 1;
-
-  // memcpy((void *)DISPLAY_BUFFER, (void *)VRAM_DRAW_BUFFER_OFFSET, 960*544*2);
-  sceGuStart(0, (void *)(RENDER_LIST | 0xA0000000));
-  sceGuCopyImage(PIXELFORMAT, 0, 0, WIDTH, HEIGHT, PITCH,
-                 (void *)VRAM_DRAW_BUFFER_OFFSET,
-                 0, 0, PITCH, (void *)DISPLAY_BUFFER);
-  sceGuFinish();
-  _sceGeListEnQueue((void *)RENDER_LIST, NULL, -1, NULL);
 }
 
 int sceGeListUpdateStallAddrPatched(int qid, void *stall) {
@@ -790,8 +779,6 @@ int sceGeListUpdateStallAddrPatched(int qid, void *stall) {
 }
 
 int sceGeListEnQueuePatched(const void *list, void *stall, int cbid, PspGeListArgs *arg) {
-  if (state.has_draws)
-    copyFrameBuffer();
   resetGeState();
   patchGeList((u32 *)((u32)list & 0x0fffffff), (u32 *)((u32)stall & 0x0fffffff));
   return _sceGeListEnQueue(list, stall, cbid, arg);
@@ -803,32 +790,79 @@ int sceGeListEnQueueHeadPatched(const void *list, void *stall, int cbid, PspGeLi
   return _sceGeListEnQueueHead(list, stall, cbid, arg);
 }
 
+int sceGeListSyncPatched(int qid, int syncType) {
+  return _sceGeListSync(qid, syncType);
+}
+
+void copyFrameBuffer() {
+  *(u32 *)DRAW_NATIVE = 1;
+
+  // memcpy((void *)DISPLAY_BUFFER, (void *)VRAM_DRAW_BUFFER_OFFSET, 960*544*2);
+  sceGuStart(0, (void *)(RENDER_LIST | 0xA0000000));
+  sceGuCopyImage(PIXELFORMAT, 0, 0, WIDTH, HEIGHT, PITCH,
+                 (void *)VRAM_DRAW_BUFFER_OFFSET,
+                 0, 0, PITCH, (void *)DISPLAY_BUFFER);
+  sceGuFinish();
+  _sceGeListEnQueue((void *)RENDER_LIST, NULL, -1, NULL);
+}
+
+int sceGeDrawSyncPatched(int syncType) {
+  int res = _sceGeDrawSync(syncType);
+  if (!framebuf_set) {
+    // Framebuffer was not set previously (maybe it does never change)
+    if (syncType == PSP_GE_LIST_DONE || syncType == PSP_GE_LIST_DRAWING_DONE) {
+      copyFrameBuffer();
+      rendered_in_sync = 1;
+    }
+  }
+  if (framebuf_set > 0)
+    framebuf_set--;
+  return res;
+}
+
 int sceDisplaySetFrameBufPatched(void *topaddr, int bufferwidth, int pixelformat, int sync) {
-  copyFrameBuffer();
+  if (!rendered_in_sync)
+    copyFrameBuffer();
+  rendered_in_sync = 0;
+  if (framebuf_set < 2)
+    framebuf_set++;
   return _sceDisplaySetFrameBuf(topaddr, bufferwidth, pixelformat, sync);
 }
 
-int module_start(SceSize args, void *argp) {
-  SceCtrlData pad;
-  sceCtrlPeekBufferPositive(&pad, 1);
-  if (pad.Buttons & PSP_CTRL_LTRIGGER)
-    return 0;
+int draw_thread(SceSize args, void *argp) {
+  while (1) {
+    _sceGeDrawSync(0);
+    copyFrameBuffer();
+    sceKernelDelayThread(30 * 1000);
+  }
 
+  return 0;
+}
+
+int module_start(SceSize args, void *argp) {
   _sceGeEdramGetAddr = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0xE47E40E4);
   _sceGeEdramGetSize = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0x1F6752AD);
   _sceGeGetList = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0x67B01D8E);
   _sceGeListUpdateStallAddr = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0xE0D68148);
   _sceGeListEnQueue = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0xAB49E76A);
   _sceGeListEnQueueHead = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0x1C0D95A6);
+  _sceGeListSync = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0x03444EB4);
+  _sceGeDrawSync = (void *)FindProc("sceGE_Manager", "sceGe_driver", 0xB287BD61);
 
   sctrlHENPatchSyscall((u32)_sceGeEdramGetAddr, sceGeEdramGetAddrPatched);
   sctrlHENPatchSyscall((u32)_sceGeEdramGetSize, sceGeEdramGetSizePatched);
   sctrlHENPatchSyscall((u32)_sceGeListUpdateStallAddr, sceGeListUpdateStallAddrPatched);
   sctrlHENPatchSyscall((u32)_sceGeListEnQueue, sceGeListEnQueuePatched);
   sctrlHENPatchSyscall((u32)_sceGeListEnQueueHead, sceGeListEnQueueHeadPatched);
+  // sctrlHENPatchSyscall((u32)_sceGeListSync, sceGeListSyncPatched);
+  sctrlHENPatchSyscall((u32)_sceGeDrawSync, sceGeDrawSyncPatched);
 
   _sceDisplaySetFrameBuf = (void *)FindProc("sceDisplay_Service", "sceDisplay_driver", 0x289D82FE);
   sctrlHENPatchSyscall((u32)_sceDisplaySetFrameBuf, sceDisplaySetFrameBufPatched);
+
+  // SceUID thid = sceKernelCreateThread("draw_thread", draw_thread, 0x11, 0x4000, 0, NULL);
+  // if (thid >= 0)
+    // sceKernelStartThread(thid, 0, NULL);
 
   sceKernelDcacheWritebackInvalidateAll();
   sceKernelIcacheClearAll();
